@@ -3,6 +3,7 @@ const http = require("http");
 const socketIo = require("socket.io");
 const cors = require("cors");
 const dotenv = require("dotenv");
+const { getActiveResourcesInfo } = require("process");
 dotenv.config("./.env");
 
 const app = express();
@@ -36,11 +37,17 @@ function shuffleArray(array) {
   return array;
 }
 
+function getUserFromQueue(socketId) {
+  const user = textQueue.find((user) => user.socketId === socketId);
+  if (user) return user;
+  return videoQueue.find((user) => user.socketId === socketId);
+}
+
 function getUserBySocketId(socketId) {
   for (const [roomId, room] of activeRooms.entries()) {
     const user = room.users.find((user) => user.socketId === socketId);
     if (user) {
-      return user;
+      return { ...user, roomId }; // return roomId too!
     }
   }
   return null;
@@ -66,6 +73,7 @@ function findMatch(queue, currentUser) {
 }
 
 function removeFromQueues(socketId) {
+
   const textIndex = textQueue.findIndex((user) => user.socketId === socketId);
   if (textIndex !== -1) {
     textQueue.splice(textIndex, 1);
@@ -79,7 +87,7 @@ function removeFromQueues(socketId) {
   }
 }
 
-function leaveRoom(socketId) {
+function leaveRoom(socketId, requeue = true) {
   for (const [roomId, room] of activeRooms.entries()) {
     if (room.users.some((user) => user.socketId === socketId)) {
       room.users.forEach((user) => {
@@ -89,28 +97,49 @@ function leaveRoom(socketId) {
         }
       });
 
-      let mode = room.mode;
-      if (mode === "text") {
-        const userIndex = textQueue.findIndex(
-          (user) => user.socketId === socketId
-        );
-        if (userIndex === -1) {
-          textQueue.push(room.users.find((user) => user.socketId === socketId));
-        }
-      } else if (mode === "video") {
-        const userIndex = videoQueue.findIndex(
-          (user) => user.socketId === socketId
-        );
-        if (userIndex === -1) {
-          videoQueue.push(
-            room.users.find((user) => user.socketId === socketId)
-          );
-        }
+      const mode = room.mode;
+
+      if (requeue) {
+        room.users.forEach((user) => {
+          if (mode === "text") {
+            if (!textQueue.find((u) => u.socketId === user.socketId)) {
+              textQueue.push(user);
+            }
+          } else {
+            if (!videoQueue.find((u) => u.socketId === user.socketId)) {
+              videoQueue.push(user);
+            }
+          }
+        });
       }
+
       activeRooms.delete(roomId);
-      // shuffleArray(mode === "text" ? textQueue : videoQueue);
       break;
     }
+  }
+}
+
+function proceedToFindNew(socket) {
+  const user = getUserBySocketId(socket.id);
+  if (!user) return;
+
+  leaveRoom(socket.id);
+  const queue = user.mode === "text" ? textQueue : videoQueue;
+  const match = findMatch(queue, user);
+
+  if (match) {
+    const roomId = generateRoomId();
+    const room = { id: roomId, mode: user.mode, users: [user, match], createdAt: new Date() };
+    activeRooms.set(roomId, room);
+
+    io.to(user.socketId).emit("matched", {
+      roomId,
+      otherUser: { id: match.id, name: match.name },
+    });
+    io.to(match.socketId).emit("matched", {
+      roomId,
+      otherUser: { id: user.id, name: user.name },
+    });
   }
 }
 
@@ -236,13 +265,55 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("find-new", () => {
+  socket.on("peer-confirm-find-new", () => {
     const user = getUserBySocketId(socket.id);
     if (!user) return;
-    const queue = user.mode === "text" ? textQueue : videoQueue;
+  
+    const otherUser = activeRooms.get(user.roomId)?.users.find((u) => u.socketId !== socket.id);
+  
+    // Disconnect both
     leaveRoom(socket.id);
-    findMatch(queue, user);
+    if (otherUser) leaveRoom(otherUser.socketId);
+  
+    // Proceed to re-match both
+    proceedToFindNew(socket);
+    if (otherUser) proceedToFindNew({ id: otherUser.socketId });
   });
+
+  socket.on("find-new", () => {
+    const user = getUserBySocketId(socket.id);
+    if (!user) {
+      const queuedUser = getUserFromQueue(socket.id);
+      if (!queuedUser) return;
+  
+      const queue = queuedUser.mode === "text" ? textQueue : videoQueue;
+      const match = findMatch(queue, queuedUser);
+  
+      if (match) {
+        const roomId = generateRoomId();
+        const room = { id: roomId, mode: queuedUser.mode, users: [queuedUser, match], createdAt: new Date() };
+        activeRooms.set(roomId, room);
+  
+        io.to(queuedUser.socketId).emit("matched", {
+          roomId,
+          otherUser: { id: match.id, name: match.name },
+        });
+        io.to(match.socketId).emit("matched", {
+          roomId,
+          otherUser: { id: queuedUser.id, name: queuedUser.name },
+        });
+      }
+      return;
+    }
+  
+    // Send prompt to the peer ONLY, no leave yet!
+    const otherUser = activeRooms.get(user.roomId)?.users.find((u) => u.socketId !== socket.id);
+    if (otherUser) {
+      io.to(otherUser.socketId).emit("peer-wants-find-new");
+    }
+  });
+
+  
 
   socket.on("end-call", () => {
     for (const [roomId, room] of activeRooms.entries()) {
@@ -261,9 +332,13 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
+    console.log("yo nikal rha bahar ------------------");
+    console.log(
+      "Text Queue:",
+      textQueue.map((user) => user.name)
+    );
+    leaveRoom(socket.id, true);
     removeFromQueues(socket.id);
-
-    leaveRoom(socket.id);
   });
 });
 
@@ -272,3 +347,28 @@ server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Socket.IO server ready for connections`);
 });
+
+// setInterval(() => {
+//   //console the state of active rooms and queues
+//   console.log("Active Rooms:", Array.from(activeRooms.keys()));
+//   console.table(
+//     Array.from(activeRooms.values()).map((room) => ({
+//       id: room.id,
+//       mode: room.mode,
+//       users: room.users.map((user) => user.name).join(", "),
+//       createdAt: room.createdAt.toLocaleString(),
+//     }))
+//   );
+//   console.log(
+//     "Text Queue:",
+//     textQueue.map((user) => user.name)
+//   );
+//   console.log(
+//     "Video Queue:",
+//     videoQueue.map((user) => user.name)
+//   );
+//   console.log("Total Active Rooms:", activeRooms.size);
+//   console.log("Total Text Queue Users:", textQueue.length);
+//   console.log("Total Video Queue Users:", videoQueue.length);
+//   console.log("--------------------------------------------------");
+// }, 10000);
