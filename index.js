@@ -73,7 +73,6 @@ function findMatch(queue, currentUser) {
 }
 
 function removeFromQueues(socketId) {
-
   const textIndex = textQueue.findIndex((user) => user.socketId === socketId);
   if (textIndex !== -1) {
     textQueue.splice(textIndex, 1);
@@ -129,7 +128,12 @@ function proceedToFindNew(socket) {
 
   if (match) {
     const roomId = generateRoomId();
-    const room = { id: roomId, mode: user.mode, users: [user, match], createdAt: new Date() };
+    const room = {
+      id: roomId,
+      mode: user.mode,
+      users: [user, match],
+      createdAt: new Date(),
+    };
     activeRooms.set(roomId, room);
 
     io.to(user.socketId).emit("matched", {
@@ -141,6 +145,13 @@ function proceedToFindNew(socket) {
       otherUser: { id: user.id, name: user.name },
     });
   }
+}
+
+function getRandomIceBreaker() {
+  const icebreakers = require("./iceBreaker");
+  const [first, ...rest] = shuffleArray([...icebreakers]);
+  const second = rest[0] || first;
+  return [first, second];
 }
 
 io.on("connection", (socket) => {
@@ -168,15 +179,19 @@ io.on("connection", (socket) => {
         createdAt: new Date(),
       };
 
+      const [first, second] = getRandomIceBreaker();
+
       activeRooms.set(roomId, room);
       socket.emit("matched", {
         roomId,
         otherUser: { id: match.id, name: match.name },
+        icebreaker: first
       });
 
       io.to(match.socketId).emit("matched", {
         roomId,
         otherUser: { id: user.id, name: user.name },
+        icebreaker: second
       });
     } else {
       console.log(` User ${userName} added to ${mode} queue`);
@@ -268,13 +283,15 @@ io.on("connection", (socket) => {
   socket.on("peer-confirm-find-new", () => {
     const user = getUserBySocketId(socket.id);
     if (!user) return;
-  
-    const otherUser = activeRooms.get(user.roomId)?.users.find((u) => u.socketId !== socket.id);
-  
+
+    const otherUser = activeRooms
+      .get(user.roomId)
+      ?.users.find((u) => u.socketId !== socket.id);
+
     // Disconnect both
     leaveRoom(socket.id);
     if (otherUser) leaveRoom(otherUser.socketId);
-  
+
     // Proceed to re-match both
     proceedToFindNew(socket);
     if (otherUser) proceedToFindNew({ id: otherUser.socketId });
@@ -285,15 +302,20 @@ io.on("connection", (socket) => {
     if (!user) {
       const queuedUser = getUserFromQueue(socket.id);
       if (!queuedUser) return;
-  
+
       const queue = queuedUser.mode === "text" ? textQueue : videoQueue;
       const match = findMatch(queue, queuedUser);
-  
+
       if (match) {
         const roomId = generateRoomId();
-        const room = { id: roomId, mode: queuedUser.mode, users: [queuedUser, match], createdAt: new Date() };
+        const room = {
+          id: roomId,
+          mode: queuedUser.mode,
+          users: [queuedUser, match],
+          createdAt: new Date(),
+        };
         activeRooms.set(roomId, room);
-  
+
         io.to(queuedUser.socketId).emit("matched", {
           roomId,
           otherUser: { id: match.id, name: match.name },
@@ -305,15 +327,15 @@ io.on("connection", (socket) => {
       }
       return;
     }
-  
+
     // Send prompt to the peer ONLY, no leave yet!
-    const otherUser = activeRooms.get(user.roomId)?.users.find((u) => u.socketId !== socket.id);
+    const otherUser = activeRooms
+      .get(user.roomId)
+      ?.users.find((u) => u.socketId !== socket.id);
     if (otherUser) {
       io.to(otherUser.socketId).emit("peer-wants-find-new");
     }
   });
-
-  
 
   socket.on("end-call", () => {
     for (const [roomId, room] of activeRooms.entries()) {
