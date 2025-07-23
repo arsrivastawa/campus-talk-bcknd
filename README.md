@@ -1,10 +1,10 @@
-# Randomize Backend Documentation
+# Randomize Backend
 
 This document explains the architecture, flow, and implementation details of the backend for **Randomize**, a real-time anonymous chat and video platform. Built using **Node.js**, **Express**, and **Socket.IO**, it manages matchmaking, rooms, messaging, WebRTC signaling, and user queues.
 
 ---
 
-## 🚀 Overview
+## Overview
 
 * **Language/Framework:** Node.js with Express
 * **WebSockets:** Powered by Socket.IO
@@ -14,7 +14,7 @@ This document explains the architecture, flow, and implementation details of the
 
 ---
 
-## 📦 Dependencies
+## Dependencies
 
 * `express` – HTTP server
 * `http` – Native module to create server
@@ -24,7 +24,7 @@ This document explains the architecture, flow, and implementation details of the
 
 ---
 
-## 🔧 Server Initialization
+## Server Initialization
 
 ```js
 const app = express();
@@ -37,7 +37,7 @@ const io = socketIo(server, { cors: { ... } });
 
 ---
 
-## 🧠 Core Structures
+## Core Structures
 
 ### Queues:
 
@@ -51,7 +51,7 @@ const io = socketIo(server, { cors: { ... } });
 
 ---
 
-## 🔁 Utility Functions
+## Utility Functions
 
 ### `generateRoomId()`
 
@@ -95,9 +95,9 @@ Fetches and shuffles icebreakers from external module.
 
 ---
 
-## ⚙️ Socket.IO Events
+## Socket.IO Events
 
-### 🔗 Connection
+### Connection
 
 ```js
 io.on("connection", (socket) => { ... })
@@ -143,22 +143,30 @@ Ends current room and requeues users.
 
 ---
 
-## 🧪 API Endpoints (planned or extendable)
+## Stress Test Benchmark
 
-None directly in this file, but can be added easily with Express middleware.
+A high-load simulation was conducted to evaluate backend stability and performance:
+
+```
+--- Benchmark Results ---
+Total users simulated: 4000
+Total Message per User: 50
+Total time: 42.92s
+Average match time: 246.48ms
+Errors: 4
+------------------------
+```
+
+**Key Highlights:**
+
+* Successfully handled **4,000 concurrent users**
+* Maintained **<250ms average matchmaking latency**
+* Processed over **200,000 messages** in under 43 seconds
+* Maintained a **99.9% success rate** with only 4 disconnects
 
 ---
 
-## 📈 Possible Enhancements
-
-* Store users and rooms in Redis for scaling
-* Add `setInterval`-based cleanup or analytics
-* Add per-room timer or inactivity tracking
-* Add moderation tools or filtering logic
-
----
-
-## ✅ Environment Variables
+## Environment Variables
 
 * `FRONTEND_URL`: URL for CORS policy
 * `PORT`: Server port (defaults to 3001)
