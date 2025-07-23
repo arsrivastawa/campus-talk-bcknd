@@ -1,126 +1,164 @@
+# Randomize Backend Documentation
 
-# CampusTalk Backend
+This document explains the architecture, flow, and implementation details of the backend for **Randomize**, a real-time anonymous chat and video platform. Built using **Node.js**, **Express**, and **Socket.IO**, it manages matchmaking, rooms, messaging, WebRTC signaling, and user queues.
 
-A Node.js backend server for CampusTalk - an anonymous chat application for college students.
+---
 
-## Features
+## 🚀 Overview
 
-- **Real-time messaging** using Socket.IO
-- **Queue management** for matching users
-- **Room-based chat** system
-- **Object-oriented design** with clean class structures
-- **RESTful API** endpoints for statistics
-- **Automatic cleanup** of disconnected users and empty rooms
+* **Language/Framework:** Node.js with Express
+* **WebSockets:** Powered by Socket.IO
+* **Modes Supported:** Text and Video
+* **Room Model:** One-to-one anonymous sessions
+* **Queue System:** FIFO with shuffling for randomness
 
-## Architecture
+---
 
-### Classes
+## 📦 Dependencies
 
-- **User**: Represents a connected user with socket management
-- **Room**: Manages chat sessions between two users
-- **QueueManager**: Handles user queue and matching logic
-- **RoomManager**: Manages active chat rooms
-- **ChatServer**: Main server class that orchestrates everything
+* `express` – HTTP server
+* `http` – Native module to create server
+* `socket.io` – WebSocket communication
+* `cors` – Enable CORS
+* `dotenv` – Environment variables loader
 
-### Data Structures
+---
 
-- **Map**: Used for storing users and rooms (O(1) lookup)
-- **Array**: Used for queue management (FIFO)
-- **Queue**: Waiting users are managed in a first-in-first-out basis
+## 🔧 Server Initialization
 
-## Installation
-
-```bash
-# Install dependencies
-npm install
-
-# Start the server
-npm start
-
-# Start in development mode with auto-reload
-npm run dev
+```js
+const app = express();
+const server = http.createServer(app);
+const io = socketIo(server, { cors: { ... } });
 ```
 
-## API Endpoints
+* CORS setup is done using frontend URL from `.env`
+* Express handles JSON payloads
 
-### GET /api/stats
-Returns server statistics:
-```json
-{
-  "connectedUsers": 5,
-  "queueLength": 1,
-  "totalRooms": 2,
-  "activeRooms": 2
-}
+---
+
+## 🧠 Core Structures
+
+### Queues:
+
+* `textQueue[]`: Users waiting for text match
+* `videoQueue[]`: Users waiting for video match
+
+### Active Rooms:
+
+* `activeRooms: Map<roomId, room>`
+* Room: `{ id, mode, users[], createdAt }`
+
+---
+
+## 🔁 Utility Functions
+
+### `generateRoomId()`
+
+Generates a unique alphanumeric room ID.
+
+### `shuffleArray(array)`
+
+Randomizes order of users in the queue to avoid deterministic pairing.
+
+### `getUserFromQueue(socketId)`
+
+Returns user object from either queue using socket ID.
+
+### `getUserBySocketId(socketId)`
+
+Finds a user inside activeRooms with room ID.
+
+### `findMatch(queue, currentUser)`
+
+* Removes user if already in queue
+* Shuffles queue
+* Finds match or re-adds the user
+
+### `removeFromQueues(socketId)`
+
+Removes user from both queues based on socket ID.
+
+### `leaveRoom(socketId, requeue = true)`
+
+* Notifies other user in the room
+* Deletes room from activeRooms
+* Requeues both users (optional)
+
+### `proceedToFindNew(socket)`
+
+Handles disconnect + rematch for users.
+
+### `getRandomIceBreaker()`
+
+Fetches and shuffles icebreakers from external module.
+
+---
+
+## ⚙️ Socket.IO Events
+
+### 🔗 Connection
+
+```js
+io.on("connection", (socket) => { ... })
 ```
 
-### GET /api/health
-Health check endpoint:
-```json
-{
-  "status": "OK",
-  "timestamp": "2024-01-01T12:00:00.000Z"
-}
-```
+Defines all client-server interactions.
 
-## Socket.IO Events
+### `join-queue`
 
-### Client to Server
+Adds user to queue or matches them.
 
-- **joinQueue**: Join the waiting queue for matching
-- **sendMessage**: Send a message to chat partner
-- **disconnectChat**: Manually disconnect from current chat
-- **findNew**: Disconnect and find a new chat partner
+* Creates room if matched
+* Emits `matched` event with icebreaker
 
-### Server to Client
+### `send-message`
 
-- **connected**: Notified when matched with another user
-- **message**: Receive a message from chat partner
-- **userDisconnected**: Notified when chat partner disconnects
-- **disconnected**: Notified when you are disconnected
+Relays message to the other peer in the same room.
 
-## Usage Example
+### `typing`
 
-```javascript
-const { ChatServer } = require('./index.js');
+Notifies peer about typing status.
 
-// Create and start server
-const server = new ChatServer();
-server.start(3001);
-```
+### WebRTC Signaling Events:
 
-## Environment Variables
+* `call-offer`: Sends offer to peer
+* `call-answer`: Sends answer to peer
+* `ice-candidate`: Sends ICE candidate to peer
 
-- **PORT**: Server port (default: 3001)
-- **NODE_ENV**: Environment mode (development/production)
+### Matching Events:
 
-## Testing
+* `find-new`: Prompts peer
+* `peer-confirm-find-new`: Finalizes disconnect and rematch
 
-```bash
-npm test
-```
+### `end-call`
 
-## Production Deployment
+Ends current room and requeues users.
 
-1. Set `NODE_ENV=production`
-2. Configure proper CORS origins
-3. Use PM2 or similar for process management
-4. Set up proper logging
-5. Configure load balancing if needed
+### `disconnect`
 
-## Security Considerations
+* Removes from queues
+* Leaves room
+* Logs queues and users (non-commented parts)
 
-- Implement rate limiting for message sending
-- Add user authentication for college verification
-- Sanitize all user inputs
-- Implement proper session management
-- Add monitoring and logging
+---
 
-## Scaling
+## 🧪 API Endpoints (planned or extendable)
 
-The server is designed to handle multiple concurrent users. For larger scales:
+None directly in this file, but can be added easily with Express middleware.
 
-- Use Redis for session storage
-- Implement horizontal scaling with multiple server instances
-- Add database persistence for chat history (optional)
-- Use message queues for better reliability
+---
+
+## 📈 Possible Enhancements
+
+* Store users and rooms in Redis for scaling
+* Add `setInterval`-based cleanup or analytics
+* Add per-room timer or inactivity tracking
+* Add moderation tools or filtering logic
+
+---
+
+## ✅ Environment Variables
+
+* `FRONTEND_URL`: URL for CORS policy
+* `PORT`: Server port (defaults to 3001)
